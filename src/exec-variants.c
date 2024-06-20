@@ -39,7 +39,10 @@ __attribute__((visibility("default"))) int execvp(const char *name, char *const 
 }
 
 __attribute__((visibility("default"))) int execvpe(const char *name, char *const *argv, char *const *envp) {
-  // if (name == NULL || *name == '\0') { errno = ENOENT; return -1; }
+  if (name == NULL || *name == '\0') {
+    errno = ENOENT;
+    return -1;
+  }
 
   // If it's an absolute or relative path name, it's easy.
   if (strchr(name, '/') && execve(name, argv, envp) == -1) {

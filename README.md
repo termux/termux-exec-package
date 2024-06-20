@@ -1,5 +1,5 @@
 # termux-exec
-A `execve()` wrapper to fix two problems with exec-ing files in Termux.
+A `execve(3)` (and exec family of functions) wrapper to fix two problems with exec-ing files in Termux.
 
 # Problem 1: Cannot execute files not part of the APK
 Android 10 started blocking executing files under the app data directory, as
@@ -14,7 +14,7 @@ While there is merit in that general principle, this prevents using Termux and A
 as a general computing device, where it should be possible for users to create executable
 scripts and binaries.
 
-# Solution 1: Cannot execute files not part of the APK
+## Solution
 Create an `exec` interceptor using [LD_PRELOAD](https://en.wikipedia.org/wiki/DLL_injection#Approaches_on_Unix-like_systems),
 that instead of executing an ELF file directly, executes `/system/bin/linker64 /path/to/elf`.
 Explanation follows below.
@@ -62,11 +62,6 @@ We could also consider patching this exec interception into the build process of
 **NOTE**: The above example used `/system/bin/linker64` - on 32-bit systems, the corresponding
 path is `/system/bin/linker`.
 
-**NOTE**: While this circumvents the technical restriction, it still might be considered
-violating [Google Play policy](https://support.google.com/googleplay/android-developer/answer/9888379).
-So this workaround is not guaranteed to enable Play store distribution of Termux - but it's
-worth an attempt, and regardless of Play store distribution, updating the targetSdk is necessary.
-
 # Problem 2: Shebang paths
 A lot of Linux software is written with the assumption that `/bin/sh`, `/usr/bin/env`
 and similar file exists. This is not the case on Android where neither `/bin/` nor `/usr/`
@@ -75,19 +70,16 @@ exists.
 When building packages for Termux those hard-coded assumptions are patched away - but this
 does not help with installing scripts and programs from other sources than Termux packages.
 
-# Solution 2: Shebang paths
+## Solution
 Create an `execve()` wrapper that rewrites calls to execute files under `/bin/` and `/usr/bin`
 into the matching Termux executables under `$PREFIX/bin/` and inject that into processes
 using `LD_PRELOAD`.
 
-# How to install
-1. Install with `pkg install termux-exec`.
-2. Exit your current session and start a new one.
-3. From now on shebangs such as `/bin/sh` and `/usr/bin/env python` should work.
+# Usage in Termux
+This `termux-exec` package comes preinstalled as an essential package in Termux. Each time a
+process is spawned by the app, the `LD_PRELOAD=$PREFIX/lib/libtermux-exec.so` environment variable
+is setup by the Android app. This environment variable needs to be kept at all times when executing
+files inside Termux.
 
-# Where is LD_PRELOAD set?
-The `$PREFIX/bin/login` program which is used to create new Termux sessions checks for
-`$PREFIX/lib/libtermux-exec.so` and if so sets up `LD_PRELOAD` before launching the login shell.
-
-Soon, when making a switch to target Android 10+, this will be setup by the Termux app even before
-launching any process, as `LD_PRELOAD` will be necessary for anything non-system to execute.
+In the future the linker `--wrap` functionaliy might be used to avoid having to rely on `LD_PRELOAD`
+always being present.

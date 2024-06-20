@@ -1,0 +1,4 @@
+/data/data/com.termux/files/usr/bin/termux-exec-test-print-argv0
+tests/print-argv0.sh
+myarg1
+myarg2

@@ -1,0 +1,3 @@
+#!/bin/sh
+
+/system/bin/sh -c 'echo LD_PRELOAD=$LD_PRELOAD TERMUX_EXEC__PROC_SELF_EXE=$TERMUX_EXEC__PROC_SELF_EXE'
