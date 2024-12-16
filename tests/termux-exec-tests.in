@@ -1,0 +1,614 @@
+#!@TERMUX__PREFIX@/bin/bash
+# shellcheck shell=bash
+
+if [ -z "${BASH_VERSION:-}" ]; then
+    echo "The 'termux-exec-tests' script must be run from a 'bash' shell."; return 64 2>/dev/null|| exit 64 # EX__USAGE
+fi
+
+
+
+termux_exec__tests__init() {
+
+TERMUX_EXEC__TESTS__MAX_LOG_LEVEL=5 # Default: `5` (VVVERBOSE=5)
+{ [[ ! "$TERMUX_EXEC__TESTS__LOG_LEVEL" =~ ^[0-9]+$ ]] || [[ "$TERMUX_EXEC__TESTS__LOG_LEVEL" -gt "$TERMUX_EXEC__TESTS__MAX_LOG_LEVEL" ]]; } && \
+TERMUX_EXEC__TESTS__LOG_LEVEL=1 # Default: `1` (OFF=0, NORMAL=1, DEBUG=2, VERBOSE=3, VVERBOSE=4 and VVVERBOSE=5)
+TERMUX_EXEC__TESTS__LOG_TAG="" # Default: ``
+
+TERMUX_EXEC__TESTS__COMMAND_TYPE_ID="" # Default: ``
+TERMUX_EXEC__TESTS__COMMAND_TYPE_NOOP="false" # Default: `false`
+
+NL=$'\n'
+
+TERMUX_EXEC__TESTS__DETECT_LEAKS=0 # Default: `0`
+TERMUX_EXEC__TESTS__NO_CLEAN="false" # Default: `false`
+TERMUX_EXEC__TESTS__USE_FSANITIZE_BUILDS="false" # Default: `false`
+TERMUX_EXEC__TESTS__ONLY_TERMUX_EXEC_TESTS="false" # Default: `false`
+TERMUX_EXEC__TESTS__SKIP_TERMUX_CORE_TESTS="false" # Default: `false`
+
+TERMUX_EXEC__TESTS__NAME_MAX=255
+TERMUX_EXEC__TESTS__REGEX__ABSOLUTE_PATH='^(/[^/]+)+$'
+TERMUX_EXEC__TESTS__REGEX__ROOTFS_OR_ABSOLUTE_PATH='^((/)|((/[^/]+)+))$'
+TERMUX_EXEC__TESTS__REGEX__APP_PACKAGE_NAME="^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$"
+TERMUX_EXEC__TESTS__REGEX__UNSIGNED_INT='^[0-9]+$'
+
+
+
+# Set `TERMUX_*` variables to environment variables exported by
+# Termux app, otherwise default to build time placeholders.
+# This is done to support scoped and dynamic variables design.
+# The `TERMUX_ENV__*` variables still use build time placeholders.
+
+TERMUX_APP__PACKAGE_NAME___N="@TERMUX_ENV__S_TERMUX_APP@PACKAGE_NAME"
+termux_exec__tests__copy_variable TERMUX_APP__PACKAGE_NAME "$TERMUX_APP__PACKAGE_NAME___N" || return $?
+{ [[ ! "$TERMUX_APP__PACKAGE_NAME" =~ $TERMUX_EXEC__TESTS__REGEX__APP_PACKAGE_NAME ]] || \
+    [ "${#TERMUX_APP__PACKAGE_NAME}" -gt $TERMUX_EXEC__TESTS__NAME_MAX ]; } && \
+TERMUX_APP__PACKAGE_NAME="@TERMUX_APP__PACKAGE_NAME@"
+
+
+TERMUX__PREFIX___N="@TERMUX_ENV__S_TERMUX@PREFIX"
+termux_exec__tests__copy_variable TERMUX__PREFIX "$TERMUX__PREFIX___N" || return $?
+[[ ! "$TERMUX__PREFIX" =~ $TERMUX_EXEC__TESTS__REGEX__ABSOLUTE_PATH ]] && \
+TERMUX__PREFIX="@TERMUX__PREFIX@"
+
+
+TERMUX_CORE__TESTS__LOG_LEVEL___N="@TERMUX_ENV__S_TERMUX_CORE__TESTS@LOG_LEVEL"
+termux_exec__tests__copy_variable TERMUX_CORE__TESTS__LOG_LEVEL "$TERMUX_CORE__TESTS__LOG_LEVEL___N" || return $?
+
+
+TERMUX_EXEC__TESTS__LOG_LEVEL___N="@TERMUX_ENV__S_TERMUX_EXEC__TESTS@LOG_LEVEL"
+termux_exec__tests__copy_variable TERMUX_EXEC__TESTS__LOG_LEVEL "$TERMUX_EXEC__TESTS__LOG_LEVEL___N" || return $?
+
+
+TERMUX_EXEC__TESTS__TESTS_PATH___N="@TERMUX_ENV__S_TERMUX_EXEC__TESTS@TESTS_PATH"
+TERMUX_EXEC__TESTS__TESTS_PATH="$TERMUX__PREFIX/libexec/installed-tests/termux-exec"
+printf -v "$TERMUX_EXEC__TESTS__TESTS_PATH___N" "%s" "$TERMUX_EXEC__TESTS__TESTS_PATH" || return $?
+export "${TERMUX_EXEC__TESTS__TESTS_PATH___N?}" || return $?
+
+
+TERMUX__USER_ID___N="@TERMUX_ENV__S_TERMUX@USER_ID"
+termux_exec__tests__copy_variable TERMUX__USER_ID "$TERMUX__USER_ID___N" || return $?
+TERMUX__USER_ID="${TERMUX__USER_ID:-0}"
+
+
+TERMUX_CORE__APPS_INFO_ENV_FILE___N="@TERMUX_ENV__S_TERMUX_CORE@APPS_INFO_ENV_FILE"
+termux_exec__tests__copy_variable TERMUX_CORE__APPS_INFO_ENV_FILE "$TERMUX_CORE__APPS_INFO_ENV_FILE___N" || return $?
+
+
+TERMUX_API_APP__APP_VERSION_NAME___N="@TERMUX_ENV__S_TERMUX_API_APP@APP_VERSION_NAME"
+
+
+
+# Set exit traps.
+termux_exec__tests__set_traps || return $?
+
+}
+
+
+
+function termux_exec__tests__log() { local log_level="${1}"; shift; if [[ $TERMUX_EXEC__TESTS__LOG_LEVEL -ge $log_level ]]; then echo "@TERMUX__LNAME@-exec-tests${TERMUX_EXEC__TESTS__LOG_TAG:+".$TERMUX_EXEC__TESTS__LOG_TAG"}:" "$@"; fi }
+function termux_exec__tests__log_literal() { local log_level="${1}"; shift; if [[ $TERMUX_EXEC__TESTS__LOG_LEVEL -ge $log_level ]]; then echo -e "@TERMUX__LNAME@-exec-tests${TERMUX_EXEC__TESTS__LOG_TAG:+".$TERMUX_EXEC__TESTS__LOG_TAG"}:" "$@"; fi }
+function termux_exec__tests__log_error() { echo "@TERMUX__LNAME@-exec-tests${TERMUX_EXEC__TESTS__LOG_TAG:+".$TERMUX_EXEC__TESTS__LOG_TAG"}:" "$@" 1>&2; }
+
+
+
+##
+# `termux_exec__tests__main` [`<argument...>`]
+##
+termux_exec__tests__main() {
+
+    local return_value
+
+    termux_exec__tests__init || return $?
+
+    local run_unit_tests="false"
+    local run_runtime_tests="false"
+
+    # Process the command arguments passed to the script.
+    termux_exec__tests__process_script_arguments "$@" || return $?
+    if [ "$TERMUX_EXEC__TESTS__COMMAND_TYPE_NOOP" = "true" ]; then return 0; fi
+
+
+    termux_exec__tests__log 4 "Running 'termux_exec__tests__main'"
+
+    if [[ "$TERMUX_EXEC__TESTS__COMMAND_TYPE_ID" == *,* ]] || \
+            [[ ",unit,runtime,all," != *",$TERMUX_EXEC__TESTS__COMMAND_TYPE_ID,"* ]]; then
+        termux_exec__tests__log_error "Invalid command type id '$TERMUX_EXEC__TESTS__COMMAND_TYPE_ID' passed. Must equal 'unit', 'runtime' or 'all'."
+        return 1
+    fi
+
+
+    termux_exec__tests__log 1 "Running 'termux-exec' tests"
+
+    local tests_start_time
+    local tests_end_time
+    tests_start_time="$(date "+%s")" || return $?
+
+
+    [[ ",unit,all," == *",$TERMUX_EXEC__TESTS__COMMAND_TYPE_ID,"* ]] && run_unit_tests="true"
+    [[ ",runtime,all," == *",$TERMUX_EXEC__TESTS__COMMAND_TYPE_ID,"* ]] && run_runtime_tests="true"
+
+
+    termux_exec__tests__log 5 "$TERMUX_EXEC__TESTS__LOG_LEVEL___N='$TERMUX_EXEC__TESTS__LOG_LEVEL'"
+    termux_exec__tests__log 5 "$TERMUX_EXEC__TESTS__TESTS_PATH___N='$TERMUX_EXEC__TESTS__TESTS_PATH'"
+    termux_exec__tests__log 5 "$TERMUX__USER_ID___N='$TERMUX__USER_ID'"
+
+
+    # Set `TERMUX_EXEC__TESTS__TESTS_PATH` used by compiled c tests.
+    if [[ ! "$TERMUX_EXEC__TESTS__TESTS_PATH" =~ $TERMUX_EXEC__TESTS__REGEX__ROOTFS_OR_ABSOLUTE_PATH ]]; then
+        termux_exec__tests__log_error "The TERMUX_EXEC__TESTS__TESTS_PATH '$TERMUX_EXEC__TESTS__TESTS_PATH' is either not set or is not an absolute path"
+        return 1
+    fi
+
+
+    # Setup variables for runtime tests.
+    if [[ "$run_runtime_tests" == "true" ]]; then
+        # Check if `termux-apps-info.env` file exists whose path is exported in
+        # the `$TERMUX_CORE__APPS_INFO_ENV_FILE` environment variable by the
+        # Termux app running the current shell, which is sourced by
+        # `termux_core__bash__termux_apps_info_app_version_name` to load the
+        # latest value in the current environment for
+        # `$TERMUX_API_APP__APP_VERSION_NAME` before getting it.
+        # The `termux-apps-app-version-name.bash` (under `$PATH`) and
+        # `termux-apps-info.env` file (as `$TERMUX_CORE__APPS_INFO_ENV_FILE` not exported)
+        # will not be available in Termux docker.
+        termux_exec__tests__log 5 "$TERMUX_CORE__APPS_INFO_ENV_FILE___N='$TERMUX_CORE__APPS_INFO_ENV_FILE'"
+        if [ -n "$TERMUX_CORE__APPS_INFO_ENV_FILE" ] && [ -f "$TERMUX_CORE__APPS_INFO_ENV_FILE" ]; then
+            # Source for `termux_core__bash__termux_apps_info_app_version_name` function.
+            termux_exec__tests__source_file_from_path "termux-apps-app-version-name.bash" || return $?
+
+            termux_core__bash__termux_apps_info_app_version_name get-value \
+                "TERMUX_API_APP__APP_VERSION_NAME" cn="termux-api-app" || return $?
+            termux_exec__tests__log 5 "$TERMUX_API_APP__APP_VERSION_NAME___N='$TERMUX_API_APP__APP_VERSION_NAME'"
+        else
+            # Fallback to manually exported variable by caller.
+            termux_exec__tests__copy_variable TERMUX_API_APP__APP_VERSION_NAME "$TERMUX_API_APP__APP_VERSION_NAME___N"
+
+            TERMUX_API_APP__APP_VERSION_NAME="${TERMUX_API_APP__APP_VERSION_NAME:-}"
+            termux_exec__tests__log 5 "${TERMUX_API_APP__APP_VERSION_NAME___N}__FALLBACK='$TERMUX_API_APP__APP_VERSION_NAME'"
+        fi
+
+
+        if [[ ! "$TERMUX__USER_ID" =~ ^(([0-9])|([1-9][0-9]{0,2}))$ ]]; then
+            termux_exec__tests__log_error "The TERMUX__USER_ID '$TERMUX__USER_ID' is not set to a valid user id."
+            return 1
+        fi
+
+        TERMUX_EXEC__TESTS__UID="$(id -u)"
+        return_value=$?
+        if [ $return_value -ne 0 ]; then
+            termux_exec__tests__log_error "Failed to get uid"
+            return $return_value
+        fi
+
+
+        ANDROID__BUILD_VERSION_SDK="$(getprop "ro.build.version.sdk")"
+        if [[ ! "$ANDROID__BUILD_VERSION_SDK" =~ $TERMUX_EXEC__TESTS__REGEX__UNSIGNED_INT ]]; then
+            termux_exec__tests__log_error "Failed to get android build version sdk with getprop"
+            return 1
+        fi
+
+
+        if [[ ! -d "$TMPDIR" ]]; then
+            termux_exec__tests__log_error "The TMPDIR '$TMPDIR' is either not set or not a directory"
+            return 1
+        fi
+
+
+        TERMUX_EXEC__TESTS__TMPDIR_PATH="$TMPDIR/termux-exec-tests"
+
+        # Ensure test directory is clean and does not contain files from previous run.
+        rm -rf "$TERMUX_EXEC__TESTS__TMPDIR_PATH" || return $?
+        mkdir -p "$TERMUX_EXEC__TESTS__TMPDIR_PATH" || return $?
+    fi
+
+
+    # Run unit tests.
+    if [[ "$run_unit_tests" == "true" ]]; then
+        termux_exec__tests__unit_tests__run_command
+        return_value=$?
+        if [ $return_value -ne 0 ]; then
+            return $return_value
+        fi
+    fi
+
+
+    # Run runtime tests.
+    if [[ "$run_runtime_tests" == "true" ]]; then
+        termux_exec__tests__runtime_tests__run_command
+        return_value=$?
+        if [ $return_value -ne 0 ]; then
+            return $return_value
+        fi
+
+        rm -rf "$TERMUX_EXEC__TESTS__TMPDIR_PATH"
+    fi
+
+    tests_end_time=$(($(date "+%s") - tests_start_time)) || return $?
+    termux_exec__tests__log 1 "All 'termux-exec' tests successful in \
+$((tests_end_time / 3600 )) hours $(((tests_end_time % 3600) / 60)) minutes $((tests_end_time % 60)) seconds"
+
+    return 0
+
+}
+
+
+
+##
+# `termux_exec__tests__unit_tests__run_command`
+##
+termux_exec__tests__unit_tests__run_command() {
+
+    local return_value
+
+    local unit_tests_variant="unit-tests"
+
+    if [[ "$TERMUX_EXEC__TESTS__USE_FSANITIZE_BUILDS" == "true" ]]; then
+        unit_tests_variant+="-fsanitize"
+    else
+        unit_tests_variant+="-nofsanitize"
+    fi
+
+    termux_exec__tests__log 2 "Running 'unit' tests ($unit_tests_variant)"
+
+    output="$(
+        printf -v "$TERMUX_EXEC__TESTS__LOG_LEVEL___N" "%s" "$TERMUX_EXEC__TESTS__LOG_LEVEL" || exit $?
+        export "${TERMUX_EXEC__TESTS__LOG_LEVEL___N?}" || exit $?
+        ASAN_OPTIONS=fast_unwind_on_malloc=false:detect_leaks="$TERMUX_EXEC__TESTS__DETECT_LEAKS" LSAN_OPTIONS=report_objects="$TERMUX_EXEC__TESTS__DETECT_LEAKS" \
+            "$TERMUX_EXEC__TESTS__TESTS_PATH/$unit_tests_variant" 2>&1)"
+    return_value=$?
+    if [ $return_value -eq 0 ] ||
+        { [ $return_value -eq 141 ] &&
+            { [[ "$output" == *"WARNING: Can't read from symbolizer at fd"* ]] ||
+              [[ "$output" == *"WARNING: external symbolizer didn't start up correctly!"* ]]
+            } &&
+            [[ "$output" == *"End 'unit' tests"* ]];
+        }; then
+        termux_exec__tests__log 1 "$output"
+    else
+        termux_exec__tests__log_error "$output"
+        termux_exec__tests__log_error "Unit tests failed"
+        return $return_value
+    fi
+
+    return 0
+
+}
+
+
+
+##
+# `termux_exec__tests__runtime_tests__run_command`
+##
+termux_exec__tests__runtime_tests__run_command() {
+
+    local return_value
+
+    termux_exec__tests__log 2 "Running 'runtime' tests"
+
+    termux_exec__tests__runtime_tests__run_runtime_binary_tests || return $?
+
+    termux_exec__tests__runtime_tests__run_runtime_script_tests || return $?
+
+    return 0
+
+}
+
+##
+# `termux_exec__tests__runtime_tests__run_runtime_binary_tests`
+##
+termux_exec__tests__runtime_tests__run_runtime_binary_tests() {
+
+    local return_value
+
+    local runtime_binary_tests_variant="runtime-binary-tests"
+
+    if [[ "$TERMUX_EXEC__TESTS__USE_FSANITIZE_BUILDS" == "true" ]]; then
+        runtime_binary_tests_variant+="-fsanitize"
+    else
+        runtime_binary_tests_variant+="-nofsanitize"
+    fi
+
+    if [ "$ANDROID__BUILD_VERSION_SDK" -ge 28 ] && [ -f "$TERMUX_EXEC__TESTS__TESTS_PATH/${runtime_binary_tests_variant}28" ]; then
+        runtime_binary_tests_variant+="28"
+    fi
+
+    termux_exec__tests__log 3 "Running 'runtime_binary' tests ($runtime_binary_tests_variant)"
+    (
+        printf -v "$TERMUX_EXEC__TESTS__LOG_LEVEL___N" "%s" "$TERMUX_EXEC__TESTS__LOG_LEVEL" || exit $?
+        export "${TERMUX_EXEC__TESTS__LOG_LEVEL___N?}" || exit $?
+        ASAN_OPTIONS=fast_unwind_on_malloc=false:detect_leaks="$TERMUX_EXEC__TESTS__DETECT_LEAKS" LSAN_OPTIONS=report_objects="$TERMUX_EXEC__TESTS__DETECT_LEAKS" \
+            "$TERMUX_EXEC__TESTS__TESTS_PATH/$runtime_binary_tests_variant"
+    )
+    return_value=$?
+    if [ $return_value -ne 0 ]; then
+        termux_exec__tests__log_error "Runtime binary tests failed"
+        return $return_value
+    fi
+
+}
+
+##
+# `termux_exec__tests__runtime_tests__run_runtime_script_tests`
+##
+termux_exec__tests__runtime_tests__run_runtime_script_tests() {
+
+    local return_value
+
+    termux_exec__tests__log 3 "Running 'runtime_script' tests"
+
+    # shellcheck source=tests/runtime-script-tests.in
+    source "$TERMUX_EXEC__TESTS__TESTS_PATH/runtime-script-tests" || return $?
+
+    TERMUX_EXEC__TESTS__LOG_TAG="script" runtime_script_tests_main || return $?
+    return_value=$?
+    if [ $return_value -ne 0 ]; then
+        termux_exec__tests__log_error "Runtime script tests failed"
+        return $return_value
+    fi
+
+    return 0
+}
+
+
+
+
+
+##
+# Source a file under `$PATH`, like under `TERMUX__PREFIX/bin`.
+#
+# A separate function is used to source so that arguments passed to
+# calling script/function are not passed to the sourced script.
+#
+#
+# termux_exec__tests__source_file_from_path <file_name>
+##
+termux_exec__tests__source_file_from_path() {
+
+    local source_file="${1:-}"; [ $# -gt 0 ] && shift 1;
+
+    local source_path
+
+    if source_path="$(command -v "$source_file")" && [ -n "$source_path" ]; then
+        # shellcheck disable=SC1090
+        source "$source_path" || return $?
+    else
+        echo "Failed to find the '$source_file' file to source." 1>&2
+        return 1
+    fi
+
+}
+
+
+
+##
+# Copy the value of a variable to another variable.
+#
+#
+# **Parameters:**
+# `output_variable_name` - The name of the output variable to set.
+# `input_variable_name` - The name of the input variable to read.
+#
+# **Returns:**
+# Returns `0` if successful, otherwise returns with a non-zero exit code.
+#
+#
+# `termux_exec__tests__copy_variable` `<output_variable_name>` `<input_variable_name>`
+##
+termux_exec__tests__copy_variable() {
+
+    local output_variable_name="${1:-}"
+    local input_variable_name="${2:-}"
+
+    if [[ ! "$output_variable_name" =~ ^[a-zA-Z][a-zA-Z0-9_]*$ ]]; then
+        echo "The output_variable_name '$output_variable_name' is not a valid shell variable name while running 'termux_exec__tests__copy_variable'." 1>&2
+        return 1
+    fi
+
+    if [[ ! "$input_variable_name" =~ ^[a-zA-Z][a-zA-Z0-9_]*$ ]]; then
+        echo "The input_variable_name '$input_variable_name' is not a valid shell variable name while running 'termux_exec__tests__copy_variable'." 1>&2
+        return 1
+    fi
+
+    eval "$output_variable_name"=\"\$\{"$input_variable_name":-\}\"
+
+}
+
+
+
+
+
+##
+# Set exit traps to `termux_exec__tests__traps()`.
+##
+termux_exec__tests__set_traps() {
+
+    # Set traps to `termux_exec__tests__traps`.
+    trap 'termux_exec__tests__traps' EXIT
+    trap 'termux_exec__tests__traps TERM' TERM
+    trap 'termux_exec__tests__traps INT' INT
+    trap 'termux_exec__tests__traps HUP' HUP
+    trap 'termux_exec__tests__traps QUIT' QUIT
+
+    return 0
+
+}
+
+termux_exec__tests__traps_killtree() {
+
+    local signal="$1"; local pid="$2"; local cpid
+    for cpid in $(pgrep -P "$pid"); do termux_exec__tests__traps_killtree "$signal" "$cpid"; done
+    [[ "$pid" != "$$" ]] && signal="${signal:=15}"; kill "-$signal" "$pid" 2>/dev/null
+
+}
+
+termux_exec__tests__traps() {
+
+    local exit_code=$?
+    trap - EXIT
+
+    if [[ "${TERMUX_EXEC__TESTS__TMPDIR_PATH:-}" =~ ^(/[^/]+)+$ ]] && [[ "$TERMUX_EXEC__TESTS__NO_CLEAN" != "true" ]]; then
+        rm -rf "$TERMUX_EXEC__TESTS__TMPDIR_PATH"
+    fi
+
+    [ -n "$1" ] && trap - "$1";
+    termux_exec__tests__traps_killtree "$1" $$;
+    exit $exit_code
+
+}
+
+
+
+
+
+##
+# `termux_exec__tests__process_script_arguments` [`<argument...>`]
+##
+termux_exec__tests__process_script_arguments() {
+
+    local opt; local opt_arg; local OPTARG; local OPTIND
+
+    if [ $# -eq 0 ]; then
+        TERMUX_EXEC__TESTS__COMMAND_TYPE_NOOP="true"
+        show_help; return $?
+    fi
+
+    # Parse options to main command.
+    while getopts ":hqvfl-:" opt; do
+        opt_arg="${OPTARG:-}"
+        case "${opt}" in
+            -)
+                case "${OPTARG}" in *?=*) opt_arg="${OPTARG#*=}";; *) opt_arg="";; esac
+                case "${OPTARG}" in
+                    help)
+                        TERMUX_EXEC__TESTS__COMMAND_TYPE_NOOP="true"
+                        show_help; return $?
+                        ;;
+                    version)
+                        TERMUX_EXEC__TESTS__COMMAND_TYPE_NOOP="true"
+                        echo "@TERMUX_EXEC_PKG__VERSION@"; return $?
+                        ;;
+                    quiet)
+                        TERMUX_EXEC__TESTS__LOG_LEVEL=0
+                        ;;
+                    ld-preload=?*)
+                        LD_PRELOAD="$(readlink -f -- "$opt_arg")" || return $?
+                        export LD_PRELOAD
+                        ;;
+                    ld-preload | ld-preload=)
+                        termux_exec__tests__log_error "No parameters set for option: '--${OPTARG%=*}'"
+                        return 1
+                        ;;
+                    no-clean)
+                        TERMUX_EXEC__TESTS__NO_CLEAN="true"
+                        ;;
+                    only-termux-exec-tests)
+                        TERMUX_EXEC__TESTS__ONLY_TERMUX_EXEC_TESTS="true"
+                        ;;
+                    skip-termux-core-tests)
+                        TERMUX_EXEC__TESTS__SKIP_TERMUX_CORE_TESTS="true"
+                        ;;
+                    tests-path=?*)
+                        TERMUX_EXEC__TESTS__TESTS_PATH="$(readlink -f -- "$opt_arg")" || return $?
+                        ;;
+                    tests-path | tests-path=)
+                        termux_exec__tests__log_error "No parameters set for option: '--${OPTARG%=*}'"
+                        return 1
+                        ;;
+                    '')
+                        # End of options `--`.
+                        break
+                        ;;
+                    *)
+                        termux_exec__tests__log_error "Unknown option: '--${OPTARG:-}'."
+                        return 1
+                        ;;
+                esac
+                ;;
+            h)
+                TERMUX_EXEC__TESTS__COMMAND_TYPE_NOOP="true"
+                show_help; return $?
+                ;;
+            q)
+                TERMUX_EXEC__TESTS__LOG_LEVEL=0
+                ;;
+            v)
+                if [ "$TERMUX_EXEC__TESTS__LOG_LEVEL" -lt "$TERMUX_EXEC__TESTS__MAX_LOG_LEVEL" ]; then
+                    TERMUX_EXEC__TESTS__LOG_LEVEL=$((TERMUX_EXEC__TESTS__LOG_LEVEL+1));
+                else
+                    termux_exec__tests__log_error "Invalid option, max log level is $TERMUX_EXEC__TESTS__MAX_LOG_LEVEL"
+                    return 1
+                fi
+                ;;
+            f)
+                TERMUX_EXEC__TESTS__USE_FSANITIZE_BUILDS="true"
+                ;;
+            l)
+                TERMUX_EXEC__TESTS__DETECT_LEAKS=1
+                ;;
+            \?)
+                :;;
+        esac
+    done
+    shift $((OPTIND - 1)) # Remove already processed arguments from argument list
+
+    if [ $# -eq 0 ]; then
+        termux_exec__tests__log_error "The command type not passed."
+        return 1
+    elif [ $# -ne 1 ]; then
+        termux_exec__tests__log_error "Expected 1 argument for command type but passed: $*"
+        return 1
+    fi
+
+    TERMUX_EXEC__TESTS__COMMAND_TYPE_ID="$1"
+
+    return 0;
+
+}
+
+##
+# `show_help`
+##
+show_help() {
+
+    cat <<'HELP_EOF'
+termux-exec-tests is a script that run tests for the termux-exec.
+
+
+Usage:
+    termux-exec-tests [command_options] <command>
+
+Available commands:
+    unit                      Run unit tests.
+    runtime                   Run runtime on-device tests.
+    all                       Run all tests.
+
+Available command_options:
+    [ -h | --help ]           Display this help screen.
+    [ --version ]             Display version.
+    [ -q | --quiet ]          Set log level to 'OFF'.
+    [ -v | -vv | -vvv | -vvvvv ]
+                              Set log level to 'DEBUG', 'VERBOSE',
+                              'VVERBOSE' and 'VVVERBOSE'.
+    [ -f ]                    Use fsanitize binaries for AddressSanitizer.
+    [ -l ]                    Detect memory leaks with LeakSanitizer.
+                              Requires '-f' to be passed.
+    [ --ld-preload=<path> ]   The path to 'libtermux-exec.so'.
+    [ --no-clean ]            Do not clean test files on failure.
+    [ --only-termux-exec-tests ]
+                              Only run 'termux-exec' package tests.
+    [ --skip-termux-core-tests ]
+                              Skip 'termux-core' package tests.
+    [ --tests-path=<path> ]   The path to installed-tests directory.
+HELP_EOF
+
+}
+
+# If script is sourced, return with success, otherwise call main function.
+# - https://stackoverflow.com/a/28776166/14686958
+# - https://stackoverflow.com/a/29835459/14686958
+if (return 0 2>/dev/null); then
+    return 0 # EX__SUCCESS
+else
+    termux_exec__tests__main "$@"
+    exit $?
+fi
