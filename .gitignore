@@ -1,3 +1,4 @@
+build/
 *.so
 *.o
 *-actual
