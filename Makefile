@@ -196,6 +196,7 @@ override LIBTERMUX_EXEC__NOS__C__SOURCE_FILES := \
 	lib/termux-exec_nos_c/tre/src/termux/api/termux_exec/service/ld_preload/TermuxExecLDPreload.c \
 	lib/termux-exec_nos_c/tre/src/termux/api/termux_exec/service/ld_preload/direct/exec/ExecIntercept.c \
 	lib/termux-exec_nos_c/tre/src/termux/api/termux_exec/service/ld_preload/direct/exec/ExecVariantsIntercept.c \
+	lib/termux-exec_nos_c/tre/src/termux/api/termux_exec/service/ld_preload/direct/file/FileAccessIntercept.c \
 	lib/termux-exec_nos_c/tre/src/termux/os/process/termux_exec/TermuxExecProcess.c \
 	lib/termux-exec_nos_c/tre/src/termux/shell/command/environment/termux_exec/TermuxExecShellEnvironment.c
 
