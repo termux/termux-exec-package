@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include <dlfcn.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <linux/limits.h>
 #include <stdarg.h>
@@ -109,10 +110,11 @@ int execve(const char *name, char *const argv[], char *const envp[]) {
 /*
  * File access interceptors for `/etc/` path redirection.
  *
- * These intercept libc file-access functions and redirect reads of
+ * These intercept libc file-access functions and redirect accesses of
  * standard Linux `/etc/` configuration files (resolv.conf, hosts,
  * nsswitch.conf, SSL CA certificates) to their Termux equivalents
- * under `$PREFIX/etc/`.
+ * under `$PREFIX/etc/`. All access modes (read, write, stat) are
+ * redirected so that programs see a consistent view of these paths.
  *
  * This fixes DNS resolution and TLS certificate verification for
  * dynamically linked programs on Termux, where Android does not
@@ -135,13 +137,21 @@ static orig_faccessat_fn real_faccessat;
 static orig_stat_fn      real_stat;
 static orig_lstat_fn     real_lstat;
 
-#define LOAD_REAL(name) do { \
-    if (!real_##name) real_##name = (orig_##name##_fn)dlsym(RTLD_NEXT, #name); \
-} while (0)
+/** Resolve real libc symbols at load time for thread safety. */
+__attribute__((constructor))
+static void initFileInterceptRealFunctions(void) {
+    real_open      = (orig_open_fn)dlsym(RTLD_NEXT, "open");
+    real_openat    = (orig_openat_fn)dlsym(RTLD_NEXT, "openat");
+    real_fopen     = (orig_fopen_fn)dlsym(RTLD_NEXT, "fopen");
+    real_access    = (orig_access_fn)dlsym(RTLD_NEXT, "access");
+    real_faccessat = (orig_faccessat_fn)dlsym(RTLD_NEXT, "faccessat");
+    real_stat      = (orig_stat_fn)dlsym(RTLD_NEXT, "stat");
+    real_lstat     = (orig_lstat_fn)dlsym(RTLD_NEXT, "lstat");
+}
 
 __attribute__((visibility("default")))
 int open(const char *pathname, int flags, ...) {
-    LOAD_REAL(open);
+    if (!real_open) { errno = ENOSYS; return -1; }
     char buf[PATH_MAX];
     const char *p = fileAccess_redirectPath(pathname, buf, sizeof(buf));
     if (flags & (O_CREAT | O_TMPFILE)) {
@@ -156,7 +166,7 @@ int open(const char *pathname, int flags, ...) {
 
 __attribute__((visibility("default")))
 int openat(int dirfd, const char *pathname, int flags, ...) {
-    LOAD_REAL(openat);
+    if (!real_openat) { errno = ENOSYS; return -1; }
     char buf[PATH_MAX];
     const char *p = (pathname && pathname[0] == '/')
                     ? fileAccess_redirectPath(pathname, buf, sizeof(buf))
@@ -173,21 +183,21 @@ int openat(int dirfd, const char *pathname, int flags, ...) {
 
 __attribute__((visibility("default")))
 FILE *fopen(const char *pathname, const char *mode) {
-    LOAD_REAL(fopen);
+    if (!real_fopen) { errno = ENOSYS; return NULL; }
     char buf[PATH_MAX];
     return real_fopen(fileAccess_redirectPath(pathname, buf, sizeof(buf)), mode);
 }
 
 __attribute__((visibility("default")))
 int access(const char *pathname, int mode) {
-    LOAD_REAL(access);
+    if (!real_access) { errno = ENOSYS; return -1; }
     char buf[PATH_MAX];
     return real_access(fileAccess_redirectPath(pathname, buf, sizeof(buf)), mode);
 }
 
 __attribute__((visibility("default")))
 int faccessat(int dirfd, const char *pathname, int mode, int flags) {
-    LOAD_REAL(faccessat);
+    if (!real_faccessat) { errno = ENOSYS; return -1; }
     char buf[PATH_MAX];
     const char *p = (pathname && pathname[0] == '/')
                     ? fileAccess_redirectPath(pathname, buf, sizeof(buf))
@@ -197,14 +207,14 @@ int faccessat(int dirfd, const char *pathname, int mode, int flags) {
 
 __attribute__((visibility("default")))
 int stat(const char *restrict pathname, struct stat *restrict statbuf) {
-    LOAD_REAL(stat);
+    if (!real_stat) { errno = ENOSYS; return -1; }
     char buf[PATH_MAX];
     return real_stat(fileAccess_redirectPath(pathname, buf, sizeof(buf)), statbuf);
 }
 
 __attribute__((visibility("default")))
 int lstat(const char *restrict pathname, struct stat *restrict statbuf) {
-    LOAD_REAL(lstat);
+    if (!real_lstat) { errno = ENOSYS; return -1; }
     char buf[PATH_MAX];
     return real_lstat(fileAccess_redirectPath(pathname, buf, sizeof(buf)), statbuf);
 }
