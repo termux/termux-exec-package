@@ -196,6 +196,7 @@ override LIBTERMUX_EXEC__NOS__C__SOURCE_FILES := \
 	lib/termux-exec_nos_c/tre/src/termux/api/termux_exec/service/ld_preload/TermuxExecLDPreload.c \
 	lib/termux-exec_nos_c/tre/src/termux/api/termux_exec/service/ld_preload/direct/exec/ExecIntercept.c \
 	lib/termux-exec_nos_c/tre/src/termux/api/termux_exec/service/ld_preload/direct/exec/ExecVariantsIntercept.c \
+	lib/termux-exec_nos_c/tre/src/termux/api/termux_exec/service/ld_preload/direct/file/FileAccessIntercept.c \
 	lib/termux-exec_nos_c/tre/src/termux/os/process/termux_exec/TermuxExecProcess.c \
 	lib/termux-exec_nos_c/tre/src/termux/shell/command/environment/termux_exec/TermuxExecShellEnvironment.c
 
@@ -248,7 +249,7 @@ CLANG_TIDY ?= clang-tidy
 # - https://www.gnu.org/software/make/manual/html_node/Parallel-Disable.html
 .NOTPARALLEL:
 
-all: | pre-build build-libtermux-exec_nos_c_tre build-libtermux-exec-direct-ld-preload build-libtermux-exec-linker-ld-preload build-termux-exec-main-app
+all: | pre-build build-libtermux-exec_nos_c_tre build-libtermux-exec-direct-ld-preload build-libtermux-exec-linker-ld-preload build-libtermux-paths-ld-preload build-termux-exec-main-app
 	@printf "\ntermux-exec-package: %s\n" "Building packaging/debian/*"
 	@mkdir -p $(DEBIAN_PACKAGING_BUILD_OUTPUT_DIR)
 	find packaging/debian -mindepth 1 -maxdepth 1 -type f -name "*.in" -exec sh -c \
@@ -437,6 +438,24 @@ build-libtermux-exec-linker-ld-preload:
 		app/termux-exec-linker-ld-preload/src/termux/api/termux_exec/service/ld_preload/linker/TermuxExecLinkerLDPreloadEntryPoint.c \
 		-l:libtermux-exec_nos_c_tre.a -l:libtermux-core_nos_c_tre.a
 
+build-libtermux-paths-ld-preload:
+	@mkdir -p $(LIB_BUILD_OUTPUT_DIR)
+
+	@# Unlike `libtermux-exec_nos_c_tre.so` and `libtermux-exec_nos_c_tre.a`, all
+	@# symbols are hidden, except the exported functions with
+	@# `default` visibility with `__attribute__((visibility("default")))`,
+	@# defined in the `TermuxPathsLDPreloadEntryPoint.c` file meant to
+	@# be intercepted by `$LD_PRELOAD`.
+	@# `nm --demangle --dynamic --defined-only --extern-only /home/builder/.termux-build/termux-exec/src/build/output/usr/lib/libtermux-paths-ld-preload.so`
+	@printf "\ntermux-exec-package: %s\n" "Building lib/libtermux-paths-ld-preload"
+	$(CC) $(CFLAGS) $(LIBTERMUX_EXEC__NOS__C__CPPFLAGS) \
+		-L$(LIB_BUILD_OUTPUT_DIR) $(LDFLAGS) -Wl,--exclude-libs=ALL \
+		$(TERMUX__CONSTANTS__MACRO_FLAGS) \
+		-fPIC -shared -fvisibility=hidden \
+		-o $(LIB_BUILD_OUTPUT_DIR)/libtermux-paths-ld-preload.so \
+		app/termux-paths-ld-preload/src/termux/api/termux_exec/service/ld_preload/paths/TermuxPathsLDPreloadEntryPoint.c \
+		-l:libtermux-exec_nos_c_tre.a -l:libtermux-core_nos_c_tre.a
+
 
 
 clean:
@@ -462,6 +481,7 @@ install:
 	install $(LIB_BUILD_OUTPUT_DIR)/libtermux-exec-ld-preload.so $(TERMUX_EXEC_PKG__INSTALL_PREFIX)/lib/libtermux-exec-ld-preload.so
 	install $(LIB_BUILD_OUTPUT_DIR)/libtermux-exec-direct-ld-preload.so $(TERMUX_EXEC_PKG__INSTALL_PREFIX)/lib/libtermux-exec-direct-ld-preload.so
 	install $(LIB_BUILD_OUTPUT_DIR)/libtermux-exec-linker-ld-preload.so $(TERMUX_EXEC_PKG__INSTALL_PREFIX)/lib/libtermux-exec-linker-ld-preload.so
+	install $(LIB_BUILD_OUTPUT_DIR)/libtermux-paths-ld-preload.so $(TERMUX_EXEC_PKG__INSTALL_PREFIX)/lib/libtermux-paths-ld-preload.so
 	@# Use `cp` for symlink as `install` will copy the target regular file instead.
 	cp -a $(LIB_BUILD_OUTPUT_DIR)/libtermux-exec.so $(TERMUX_EXEC_PKG__INSTALL_PREFIX)/lib/libtermux-exec.so
 
@@ -490,6 +510,7 @@ uninstall:
 	rm -f $(TERMUX_EXEC_PKG__INSTALL_PREFIX)/lib/libtermux-exec-ld-preload.so
 	rm -f $(TERMUX_EXEC_PKG__INSTALL_PREFIX)/lib/libtermux-exec-direct-ld-preload.so
 	rm -f $(TERMUX_EXEC_PKG__INSTALL_PREFIX)/lib/libtermux-exec-linker-ld-preload.so
+	rm -f $(TERMUX_EXEC_PKG__INSTALL_PREFIX)/lib/libtermux-paths-ld-preload.so
 	rm -f $(TERMUX_EXEC_PKG__INSTALL_PREFIX)/lib/libtermux-exec.so
 
 
@@ -533,14 +554,14 @@ test-runtime: all
 
 
 format:
-	$(CLANG_FORMAT) -i app/termux-exec-direct-ld-preload/src/termux/api/termux_exec/service/ld_preload/direct/TermuxExecDirectLDPreloadEntryPoint.c $(LIBTERMUX_EXEC__NOS__C__SOURCE_FILES)
+	$(CLANG_FORMAT) -i app/termux-exec-direct-ld-preload/src/termux/api/termux_exec/service/ld_preload/direct/TermuxExecDirectLDPreloadEntryPoint.c app/termux-paths-ld-preload/src/termux/api/termux_exec/service/ld_preload/paths/TermuxPathsLDPreloadEntryPoint.c $(LIBTERMUX_EXEC__NOS__C__SOURCE_FILES)
 check:
-	$(CLANG_FORMAT) --dry-run app/termux-exec-direct-ld-preload/src/termux/api/termux_exec/service/ld_preload/direct/TermuxExecDirectLDPreloadEntryPoint.c $(LIBTERMUX_EXEC__NOS__C__SOURCE_FILES)
+	$(CLANG_FORMAT) --dry-run app/termux-exec-direct-ld-preload/src/termux/api/termux_exec/service/ld_preload/direct/TermuxExecDirectLDPreloadEntryPoint.c app/termux-paths-ld-preload/src/termux/api/termux_exec/service/ld_preload/paths/TermuxPathsLDPreloadEntryPoint.c $(LIBTERMUX_EXEC__NOS__C__SOURCE_FILES)
 	$(CLANG_TIDY) -warnings-as-errors='*' \
-		app/termux-exec-direct-ld-preload/src/termux/api/termux_exec/service/ld_preload/direct/TermuxExecDirectLDPreloadEntryPoint.c $(LIBTERMUX_EXEC__NOS__C__SOURCE_FILES) -- \
+		app/termux-exec-direct-ld-preload/src/termux/api/termux_exec/service/ld_preload/direct/TermuxExecDirectLDPreloadEntryPoint.c app/termux-paths-ld-preload/src/termux/api/termux_exec/service/ld_preload/paths/TermuxPathsLDPreloadEntryPoint.c $(LIBTERMUX_EXEC__NOS__C__SOURCE_FILES) -- \
 		$(LIBTERMUX_EXEC__NOS__C__CPPFLAGS) \
 		$(TERMUX__CONSTANTS__MACRO_FLAGS)
 
 
 
-.PHONY: all pre-build build-termux-exec-main-app build-libtermux-exec_nos_c_tre build-libtermux-exec_nos_c_tre_runtime-binary-tests build-libtermux-exec-linker-ld-preload build-libtermux-exec-direct-ld-preload clean install uninstall packaging-debian-build test test-unit test-runtime format check
+.PHONY: all pre-build build-termux-exec-main-app build-libtermux-exec_nos_c_tre build-libtermux-exec_nos_c_tre_runtime-binary-tests build-libtermux-exec-linker-ld-preload build-libtermux-exec-direct-ld-preload build-libtermux-paths-ld-preload clean install uninstall packaging-debian-build test test-unit test-runtime format check
