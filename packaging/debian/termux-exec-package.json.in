@@ -15,6 +15,13 @@
         "": {
             "source": "build/output/usr",
             "source_recurse": true
+        },
+        "share/doc/termux-exec/copyright": {
+            "source": "LICENSE"
+        },
+        "share/doc/termux-exec/licenses": {
+            "source": "licenses",
+            "source_recurse": true
         }
     }
 }
