@@ -243,10 +243,10 @@ int execveInterceptInternal(const char *origExecutablePath, char *const argv[], 
     // are either under `/data` or `/mnt`, there is no conflict with
     // system directories, and so file headers for files under app
     // data directories should always be read.
-    // error: "/data/data/com.termux/files/usr/libexec/installed-tests/termux-exec/lib/termux-exec_nos_c/tre/scripts/termux/api/termux_exec/service/ld_preload/direct/exec/files/print-args-linux-script.sh" \
+    // error: "/data/data/com.termux/files/usr/libexec/installed-tests/termux-exec/lib/termux-exec_nos_c/tre/scripts/termux/api/termux_exec/service/ld_preload/direct/exec/files/print-args-linux-script.sh"
     //     is too small to be an ELF executable: only found 52 bytes
     // - https://cs.android.com/android/platform/superproject/+/android-14.0.0_r1:bionic/linker/linker_phdr.cpp;l=216
-    // error: "/data/data/com.termux/files/usr/bin/login" \
+    // error: "/data/data/com.termux/files/usr/bin/login"
     //     has bad ELF magic: 23212f64
     // - https://cs.android.com/android/platform/superproject/+/android-14.0.0_r1:bionic/linker/linker_phdr.cpp;l=234
     if (isExecutableUnderSystemDir(executablePath)) {
