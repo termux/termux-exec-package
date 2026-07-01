@@ -12,6 +12,19 @@ main() {
 
     log "Start"
 
+    # Run after the package is installed: `postinst configure <old-version>`
+    # - https://manpages.debian.org/testing/dpkg-dev/deb-postinst.5.en.html#postinst
+    if [ "$1" = "configure" ]; then
+        set_primary_termux_ld_preload_library || return $?
+    fi
+
+    log "End"
+
+}
+
+set_primary_termux_ld_preload_library() {
+
+    log "Setting primary Termux '\$LD_PRELOAD' library"
 
     local is_android_build_version_sdk_available="true"
     local android_build_version_sdk="${ANDROID__BUILD_VERSION_SDK:-}"
@@ -41,9 +54,6 @@ main() {
     else
         log_error "Skipping setting primary Termux '\$LD_PRELOAD' library as android_build_version_sdk value is not available"
     fi
-
-
-    log "End"
 
 }
 
