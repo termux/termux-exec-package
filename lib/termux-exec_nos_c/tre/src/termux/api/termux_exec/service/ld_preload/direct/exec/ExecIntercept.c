@@ -53,7 +53,7 @@ int execveIntercept(bool intercept, const char *executablePath, char *const argv
             logErrorDebug(LOG_TAG, "<----- execve() intercepted ----->");
         }
         logErrorVerbose(LOG_TAG, "executable = '%s'", executablePath);
-        int tmpArgvCount = 0;
+        size_t tmpArgvCount = 0;
         while (argv[tmpArgvCount] != NULL) {
             logErrorVerbose(LOG_TAG, "   argv[%d] = '%s'", tmpArgvCount, argv[tmpArgvCount]);
             tmpArgvCount++;
@@ -424,10 +424,9 @@ int execveInterceptInternal(const char *origExecutablePath, char *const argv[], 
     if (debugLoggingEnabled) {
         logErrorVerbose(LOG_TAG, "Calling syscall execve");
         logErrorVerbose(LOG_TAG, "executable = '%s'", executablePath);
-        int tmpArgvCount = 0;
-        int arg_count = 0;
+        size_t tmpArgvCount = 0;
         while (argv[tmpArgvCount] != NULL) {
-            logErrorVerbose(LOG_TAG, "   argv[%d] = '%s'", arg_count++, argv[tmpArgvCount]);
+            logErrorVerbose(LOG_TAG, "   argv[%d] = '%s'", tmpArgvCount, argv[tmpArgvCount]);
             tmpArgvCount++;
         }
     }
@@ -676,15 +675,15 @@ bool shouldUnsetLDVarsFromEnv(bool isNonNativeElf, const char *executablePath) {
 int modifyExecEnv(char *const *envp, char ***newEnvpPointer,
     char** envTermuxProcSelfExe, bool unsetLdVarsFromEnv,
     bool unsetLdPreloadFromEnv) {
-    int envCount = 0;
-    while (envp[envCount] != NULL) {
-        envCount++;
+    size_t envpCount = 0;
+    while (envp[envpCount] != NULL) {
+        envpCount++;
     }
 
     // Allocate new environment variable array. Size + 2 since
     // we might perhaps append a TERMUX_EXEC__PROC_SELF_EXE variable and
     // we will also NULL terminate.
-    size_t newEnvpSize = (sizeof(char *) * (envCount + 2));
+    size_t newEnvpSize = (sizeof(char *) * (envpCount + 2));
     void* result = malloc(newEnvpSize);
     if (result == NULL) {
         logStrerrorDebug(LOG_TAG, "The malloc called failed for new envp with size '%zu'", newEnvpSize);
@@ -697,8 +696,8 @@ int modifyExecEnv(char *const *envp, char ***newEnvpPointer,
     bool isRunningTests = libtermux_exec__nos__c__getIsRunningTests();
 
     bool alreadyFoundProcSelfExe = false;
-    int index = 0;
-    for (int i = 0; i < envCount; i++) {
+    size_t index = 0;
+    for (size_t i = 0; i < envpCount; i++) {
         if (stringStartsWith(envp[i], ENV_PREFIX__TERMUX_EXEC__PROC_SELF_EXE)) {
             if (envTermuxProcSelfExe != NULL && *envTermuxProcSelfExe != NULL) {
                 newEnvp[index++] = *envTermuxProcSelfExe;
@@ -758,12 +757,12 @@ int modifyExecArgs(char *const *argv, const char ***newArgvPointer,
     const char *origExecutablePath, const char *executablePath,
     bool shouldEnableInterpreterExec, bool shouldEnableSystemLinkerExec,
     struct TermuxFileHeaderInfo *info) {
-    int argsCount = 0;
-    while (argv[argsCount] != NULL) {
-        argsCount++;
+    size_t argvCount = 0;
+    while (argv[argvCount] != NULL) {
+        argvCount++;
     }
 
-    size_t newArgvSize = (sizeof(char *) * (argsCount + 2));
+    size_t newArgvSize = (sizeof(char *) * (argvCount + 2));
     void* result = malloc(newArgvSize);
     if (result == NULL) {
         logStrerrorDebug(LOG_TAG, "The malloc called failed for new argv with size '%zu'", newArgvSize);
@@ -773,7 +772,7 @@ int modifyExecArgs(char *const *argv, const char ***newArgvPointer,
     const char **newArgv = (const char **) result;
     *newArgvPointer = newArgv;
 
-    int index = 0;
+    size_t index = 0;
 
     if (shouldEnableInterpreterExec) {
         // Use original interpreter path set in executable file as is.
@@ -796,7 +795,7 @@ int modifyExecArgs(char *const *argv, const char ***newArgvPointer,
         newArgv[index++] = origExecutablePath;
     }
 
-    for (int i = 1; i < argsCount; i++) {
+    for (size_t i = 1; i < argvCount; i++) {
         newArgv[index++] = argv[i];
     }
 
