@@ -682,7 +682,7 @@ int modifyExecEnv(char *const *envp, char ***newEnvpPointer,
 
     // Allocate new environment variable array. Size + 2 since
     // we might perhaps append a TERMUX_EXEC__PROC_SELF_EXE variable and
-    // we will also NULL terminate.
+    // we will also Null terminate.
     size_t newEnvpSize = (sizeof(char *) * (envpCount + 2));
     void* result = malloc(newEnvpSize);
     if (result == NULL) {
@@ -762,7 +762,12 @@ int modifyExecArgs(char *const *argv, const char ***newArgvPointer,
         argvCount++;
     }
 
-    size_t newArgvSize = (sizeof(char *) * (argvCount + 2));
+    size_t newArgvCount = argvCount +
+        (shouldEnableSystemLinkerExec ? 1 : 0) +
+        (shouldEnableInterpreterExec ? (info->interpreterArg != NULL ? 2 : 1) : 0) +
+        /* Null terminate */ 1;
+
+    size_t newArgvSize = (sizeof(char *) * newArgvCount);
     void* result = malloc(newArgvSize);
     if (result == NULL) {
         logStrerrorDebug(LOG_TAG, "The malloc called failed for new argv with size '%zu'", newArgvSize);
