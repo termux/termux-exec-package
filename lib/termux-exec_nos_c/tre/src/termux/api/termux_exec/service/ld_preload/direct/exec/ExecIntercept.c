@@ -5,6 +5,7 @@
 #include <libgen.h>
 #include <limits.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -309,6 +310,32 @@ int execveInterceptInternal(const char *origExecutablePath, char *const argv[], 
     }
     bool shouldEnableSystemLinkerExec = shouldEnableSystemLinkerExecResult == 0 ? true : false;
 
+    // Android's system linker (`/system/bin/linker*`) only supports dynamically
+    // linked binaries with `PT_INTERP`. Check the target ELF (or the script's
+    // interpreter ELF if running a shebang script) and skip linker wrapping for
+    // static / static-PIE ELFs so they are not passed blindly to `linker*`.
+    if (shouldEnableSystemLinkerExec) {
+        const char *elfHeader = (!shouldEnableInterpreterExec && headerLength >= 0) ? header : NULL;
+        size_t elfHeaderLength = (!shouldEnableInterpreterExec && headerLength >= 0) ? (size_t)headerLength : 0;
+        bool isStaticElf = false;
+        if (checkElfIsStatic(executablePath, elfHeader, elfHeaderLength, &isStaticElf) == 0) {
+            if (isStaticElf) {
+                info.isStaticElf = true;
+                shouldEnableSystemLinkerExec = false;
+                logErrorDebug(LOG_TAG, "Disabling system_linker_exec for static ELF '%s'", executablePath);
+            }
+        } else {
+            // Propagate `ENOEXEC` when ELF program headers are truncated or corrupt so
+            // `execve()` fails directly instead of invoking `linker*`; ignore
+            // non-`ENOEXEC` auxiliary probe errors so callers are unaffected.
+            if (errno == ENOEXEC) {
+                logStrerrorDebug(LOG_TAG, "Invalid or truncated ELF program headers for executable path '%s'", executablePath);
+                return -1;
+            }
+            errno = 0;
+        }
+    }
+
 
 
     bool modifyEnv = false;
@@ -433,6 +460,9 @@ int execveInterceptInternal(const char *origExecutablePath, char *const argv[], 
 
     int syscallReturnValue = execveSyscall(executablePath, argv, envp);
     int savedErrno = errno;
+    if (info.isStaticElf && savedErrno == EACCES) {
+        logErrorDebug(LOG_TAG, "Cannot execute static ELF '%s': blocked by Android app data W^X restrictions (EACCES) and unsupported by system_linker_exec", executablePath);
+    }
     logStrerrorDebug(LOG_TAG, "execve() syscall failed for executable path '%s'", executablePath);
     free(envTermuxProcSelfExe);
     free(newEnvp);
@@ -643,6 +673,240 @@ int inspectFileHeader(const char *termuxPrefixDir, char *header, size_t headerLe
 
 bool isElfFile(char *header, size_t headerLength) {
     return headerLength >= 20 && !memcmp(header, ELFMAG, SELFMAG);
+}
+
+#if defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)
+#define TERMUX_ELF_NATIVE_DATA ELFDATA2LSB
+#elif defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
+#define TERMUX_ELF_NATIVE_DATA ELFDATA2MSB
+#else
+#error "Unsupported byte order"
+#endif
+
+static bool scanPhdrsForPtInterp(const char *phdrBuf, uint16_t phnum, uint16_t phentsize) {
+    for (uint16_t i = 0; i < phnum; i++) {
+        uint32_t pType = 0;
+        // `p_type` is the first 4-byte field in both `Elf32_Phdr` and `Elf64_Phdr`.
+        memcpy(&pType, phdrBuf + ((size_t)i * (size_t)phentsize), sizeof(pType));
+        if (pType == PT_INTERP) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static int preadExact(int fd, char *buf, size_t size, off_t offset) {
+    size_t totalRead = 0;
+    while (totalRead < size) {
+        ssize_t bytesRead = pread(fd, buf + totalRead, size - totalRead, offset + (off_t)totalRead);
+        if (bytesRead < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return -1;
+        }
+        if (bytesRead == 0) {
+            errno = ENOEXEC;
+            return -1;
+        }
+        totalRead += (size_t)bytesRead;
+    }
+    return 0;
+}
+
+int checkElfIsStatic(const char *executablePath, const char *header, size_t headerLength,
+    bool *isStaticElf) {
+    if (isStaticElf == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    *isStaticElf = false;
+
+    int elfFd = -1;
+    char localHeader[TERMUX__FILE_HEADER__BUFFER_SIZE];
+    if (header == NULL || headerLength == 0) {
+        if (executablePath == NULL) {
+            return 0;
+        }
+        // Open once and reuse `elfFd` if trailing program headers need `pread()`.
+        elfFd = open(executablePath, O_RDONLY | O_CLOEXEC);
+        if (elfFd == -1) {
+            logStrerrorDebug(LOG_TAG, "Failed to open elf path '%s' for file header", executablePath);
+            return -1;
+        }
+        ssize_t bytesRead = -1;
+        do {
+            bytesRead = read(elfFd, localHeader, sizeof(localHeader) - 1);
+        } while (bytesRead < 0 && errno == EINTR);
+        if (bytesRead < 0) {
+            int savedErr = errno;
+            logStrerrorDebug(LOG_TAG, "Failed to read elf path '%s' for file header", executablePath);
+            close(elfFd);
+            errno = savedErr;
+            return -1;
+        }
+        header = localHeader;
+        headerLength = (size_t)bytesRead;
+    }
+
+    if (headerLength < EI_NIDENT || memcmp(header, ELFMAG, SELFMAG) != 0) {
+        if (elfFd != -1) {
+            close(elfFd);
+        }
+        return 0;
+    }
+
+    unsigned char elfClass = (unsigned char)header[EI_CLASS];
+    unsigned char elfData = (unsigned char)header[EI_DATA];
+    if (elfData != TERMUX_ELF_NATIVE_DATA) {
+        if (elfFd != -1) {
+            close(elfFd);
+        }
+        return 0;
+    }
+
+    uint16_t machine = 0;
+    uint64_t phoff = 0;
+    uint16_t phentsize = 0;
+    uint16_t phnum = 0;
+    size_t expectedPhentsize = 0;
+
+    if (elfClass == ELFCLASS64) {
+        if (headerLength < sizeof(Elf64_Ehdr)) {
+            if (elfFd != -1) {
+                close(elfFd);
+            }
+            return 0;
+        }
+        Elf64_Ehdr ehdr64;
+        memcpy(&ehdr64, header, sizeof(ehdr64));
+        machine = ehdr64.e_machine;
+        phoff = ehdr64.e_phoff;
+        phentsize = ehdr64.e_phentsize;
+        phnum = ehdr64.e_phnum;
+        expectedPhentsize = sizeof(Elf64_Phdr);
+    } else if (elfClass == ELFCLASS32) {
+        if (headerLength < sizeof(Elf32_Ehdr)) {
+            if (elfFd != -1) {
+                close(elfFd);
+            }
+            return 0;
+        }
+        Elf32_Ehdr ehdr32;
+        memcpy(&ehdr32, header, sizeof(ehdr32));
+        machine = ehdr32.e_machine;
+        phoff = ehdr32.e_phoff;
+        phentsize = ehdr32.e_phentsize;
+        phnum = ehdr32.e_phnum;
+        expectedPhentsize = sizeof(Elf32_Phdr);
+    } else {
+        if (elfFd != -1) {
+            close(elfFd);
+        }
+        return 0;
+    }
+
+    if (machine != EM_NATIVE) {
+        if (elfFd != -1) {
+            close(elfFd);
+        }
+        return 0;
+    }
+
+    // An ELF without program headers cannot have `PT_INTERP`; treat malformed
+    // entry sizes conservatively rather than risking out-of-bounds reads.
+    if (phoff == 0 || phnum == 0 || phentsize < expectedPhentsize) {
+        *isStaticElf = (phnum == 0);
+        if (elfFd != -1) {
+            close(elfFd);
+        }
+        return 0;
+    }
+
+    static const size_t maxPhdrTableSize = 1024 * 1024;
+    if ((size_t)phnum > maxPhdrTableSize / (size_t)phentsize) {
+        if (elfFd != -1) {
+            close(elfFd);
+        }
+        return 0;
+    }
+    size_t phdrTableSize = (size_t)phnum * (size_t)phentsize;
+
+    uint64_t maxOffT = (sizeof(off_t) >= sizeof(uint64_t))
+        ? (uint64_t)INT64_MAX
+        : (((uint64_t)1 << (sizeof(off_t) * 8 - 1)) - 1);
+    if (phoff > maxOffT - phdrTableSize) {
+        if (elfFd != -1) {
+            close(elfFd);
+        }
+        return 0;
+    }
+
+    // Fast path: scan any complete program headers already present in `header`.
+    // Dynamically linked ELFs normally place `PT_INTERP` in the first 1-2 entries,
+    // avoiding extra `open()`/`pread()` syscalls even when `phnum * phentsize`
+    // extends past `TERMUX__FILE_HEADER__BUFFER_SIZE`.
+    uint16_t cachedPhnum = 0;
+    if (phoff < (uint64_t)headerLength) {
+        size_t availBytes = headerLength - (size_t)phoff;
+        size_t maxCached = availBytes / (size_t)phentsize;
+        cachedPhnum = (maxCached >= (size_t)phnum) ? phnum : (uint16_t)maxCached;
+        if (cachedPhnum > 0 && scanPhdrsForPtInterp(header + (size_t)phoff, cachedPhnum, phentsize)) {
+            if (elfFd != -1) {
+                close(elfFd);
+            }
+            return 0;
+        }
+        if (cachedPhnum == phnum) {
+            *isStaticElf = true;
+            if (elfFd != -1) {
+                close(elfFd);
+            }
+            return 0;
+        }
+    }
+
+    if (elfFd == -1) {
+        if (executablePath == NULL) {
+            return 0;
+        }
+        elfFd = open(executablePath, O_RDONLY | O_CLOEXEC);
+        if (elfFd == -1) {
+            logStrerrorDebug(LOG_TAG, "Failed to open ELF path '%s' for program headers", executablePath);
+            return -1;
+        }
+    }
+
+    uint16_t remPhnum = phnum - cachedPhnum;
+    size_t remSize = (size_t)remPhnum * (size_t)phentsize;
+    off_t remOff = (off_t)(phoff + ((uint64_t)cachedPhnum * (uint64_t)phentsize));
+
+    char stackPhdrBuf[1024];
+    char *phdrBuf = (remSize <= sizeof(stackPhdrBuf)) ? stackPhdrBuf : malloc(remSize);
+    if (phdrBuf == NULL) {
+        int savedErr = errno;
+        close(elfFd);
+        errno = savedErr;
+        return -1;
+    }
+
+    int readResult = preadExact(elfFd, phdrBuf, remSize, remOff);
+    int savedErr = errno;
+    close(elfFd);
+
+    if (readResult != 0) {
+        if (phdrBuf != stackPhdrBuf) {
+            free(phdrBuf);
+        }
+        errno = savedErr;
+        return -1;
+    }
+
+    *isStaticElf = !scanPhdrsForPtInterp(phdrBuf, remPhnum, phentsize);
+    if (phdrBuf != stackPhdrBuf) {
+        free(phdrBuf);
+    }
+    return 0;
 }
 
 
