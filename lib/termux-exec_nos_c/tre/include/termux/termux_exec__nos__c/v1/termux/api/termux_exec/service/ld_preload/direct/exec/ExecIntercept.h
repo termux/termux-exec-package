@@ -169,6 +169,12 @@ struct TermuxFileHeaderInfo {
     bool isNonNativeElf;
 
     /**
+     * Whether the ELF file is statically linked (has no `PT_INTERP`
+     * program header).
+     */
+    bool isStaticElf;
+
+    /**
      * The original interpreter path set in the executable file that is
      * not normalized, absolutized or prefixed.
      */
@@ -263,6 +269,29 @@ int inspectFileHeader(const char *termuxPrefixDir, char *header, size_t headerLe
  * @param headerLength The actual length of the header that was read.
  */
 bool isElfFile(char *header, size_t headerLength);
+
+/**
+ * Check if an ELF file is statically linked by scanning its program
+ * header table for a `PT_INTERP` segment.
+ *
+ * If `header` is `NULL` or `headerLength == 0`, the initial header bytes
+ * are read from `executablePath`. If the program header table extends
+ * beyond `headerLength`, the table is read from `executablePath` via
+ * `pread()`.
+ *
+ * @param executablePath The path of the executable (may be `NULL` if the
+ *                       full ELF header and program headers fit in `header`).
+ * @param header Optional already-read file header bytes.
+ * @param headerLength The length of `header` in bytes.
+ * @param isStaticElf Output flag set to `true` if the file is a valid
+ *                    native-endianness ELF lacking a `PT_INTERP` segment,
+ *                    otherwise `false`.
+ * @return Returns `0` on success (including non-ELF or unparsed headers,
+ *         with `*isStaticElf` set to `false`), otherwise `-1` on I/O or
+ *         allocation failures.
+ */
+int checkElfIsStatic(const char *executablePath, const char *header, size_t headerLength,
+    bool *isStaticElf);
 
 
 
